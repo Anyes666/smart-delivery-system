@@ -104,4 +104,4 @@ python scripts/demo.py --compare
 
 ## License
 
-仅供课程学习与学术评审使用。
+仅供课程学习使用。
