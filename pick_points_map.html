@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Amap Delivery Point Picker</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI','Microsoft YaHei',sans-serif;display:flex;height:100vh;overflow:hidden}
+#map{flex:1;min-width:0}
+#panel{width:380px;background:#1a1a2e;color:#e0e0e0;display:flex;flex-direction:column;overflow-y:auto;
+       border-left:2px solid #00d4ff}
+#panel h2{color:#00d4ff;padding:16px;font-size:18px;border-bottom:1px solid #333;text-align:center}
+.section{padding:12px 16px;border-bottom:1px solid #2a2a3e}
+.section h3{color:#00ff95;font-size:14px;margin-bottom:8px}
+.form-row{display:flex;align-items:center;margin:6px 0;gap:8px}
+.form-row label{width:110px;font-size:13px;color:#aaa;text-align:right;flex-shrink:0}
+.form-row input,.form-row select{flex:1;padding:5px 8px;border:1px solid #444;border-radius:4px;
+    background:#2a2a3e;color:#e0e0e0;font-size:13px}
+.form-row select{background:#2a2a3e}
+.tw-preset{display:flex;gap:4px;flex-wrap:wrap;margin-top:4px}
+.tw-preset button{font-size:11px;padding:3px 8px;border:1px solid #555;border-radius:3px;
+    background:#2a2a3e;color:#ccc;cursor:pointer}
+.tw-preset button:hover{background:#00d4ff;color:#000}
+#pointTable{width:100%;font-size:12px;border-collapse:collapse;margin-top:8px}
+#pointTable th{background:#2a2a3e;color:#00d4ff;padding:5px 4px;text-align:center;position:sticky;top:0}
+#pointTable td{padding:4px;text-align:center;border-bottom:1px solid #2a2a3e;color:#ccc}
+#pointTable tr.depot td{color:#ff6d00;font-weight:bold}
+#pointTable .del-btn{color:#ff0040;cursor:pointer;font-weight:bold;font-size:14px}
+#pointTable .del-btn:hover{color:#fff}
+#tableWrap{max-height:260px;overflow-y:auto}
+.actions{padding:12px 16px;display:flex;flex-direction:column;gap:8px}
+.actions button{padding:10px;border:none;border-radius:4px;font-size:14px;cursor:pointer;font-weight:bold}
+.btn-export{background:#00d4ff;color:#000}
+.btn-export:hover{background:#00e5ff}
+.btn-reset{background:#ff0040;color:#fff}
+.btn-reset:hover{background:#ff1744}
+.btn-undo{background:#555;color:#fff}
+.btn-undo:hover{background:#777}
+#status{padding:8px 16px;font-size:12px;color:#00ff95;text-align:center}
+.legend{font-size:11px;color:#888;padding:4px 16px}
+.legend span{margin-right:12px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:3px}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="panel">
+    <h2>Delivery Point Picker</h2>
+    <div class="section">
+        <h3>Step 1: Set Depot (click on map)</h3>
+        <p style="font-size:12px;color:#888">First click = depot (id=0). Then click for delivery points.</p>
+    </div>
+    <div class="section" id="formSection" style="display:none">
+        <h3>Step 2: Point Details</h3>
+        <div class="form-row">
+            <label>Demand:</label>
+            <input type="number" id="demand" value="10" min="1" max="999">
+        </div>
+        <div class="form-row">
+            <label>Priority:</label>
+            <select id="priority">
+                <option value="1">1 - High</option>
+                <option value="2" selected>2 - Medium</option>
+                <option value="3">3 - Low</option>
+            </select>
+        </div>
+        <div class="form-row">
+            <label>Time Window Start:</label>
+            <input type="number" id="tw_start" value="28800" step="1800">
+        </div>
+        <div class="form-row">
+            <label>Time Window End:</label>
+            <input type="number" id="tw_end" value="36000" step="1800">
+        </div>
+        <div class="tw-preset">
+            <span style="font-size:11px;color:#888;margin-right:4px">Presets:</span>
+            <button onclick="setTW(28800,32400)">8:00-9:00</button>
+            <button onclick="setTW(28800,36000)">8:00-10:00</button>
+            <button onclick="setTW(28800,43200)">8:00-12:00</button>
+            <button onclick="setTW(32400,36000)">9:00-10:00</button>
+            <button onclick="setTW(36000,43200)">10:00-12:00</button>
+            <button onclick="setTW(43200,54000)">12:00-15:00</button>
+            <button onclick="setTW(28800,64800)">8:00-18:00</button>
+            <button onclick="setTW(0,86400)">All Day</button>
+        </div>
+        <div style="margin-top:10px">
+            <button onclick="confirmPoint()" style="width:100%;padding:8px;background:#00ff95;color:#000;
+                border:none;border-radius:4px;font-weight:bold;cursor:pointer;font-size:14px">
+                Confirm Point
+            </button>
+        </div>
+    </div>
+    <div class="section">
+        <h3>Selected Points (<span id="count">0</span>)</h3>
+        <div id="tableWrap">
+            <table id="pointTable">
+                <thead><tr>
+                    <th>ID</th><th>Type</th><th>Lon</th><th>Lat</th><th>Demand</th><th>TW Start</th><th>TW End</th><th>Pri</th><th></th>
+                </tr></thead>
+                <tbody id="tableBody"></tbody>
+            </table>
+        </div>
+    </div>
+    <div class="actions">
+        <button class="btn-export" onclick="exportCSV()">Download CSV</button>
+        <button class="btn-undo" onclick="undoLast()">Undo Last Point</button>
+        <button class="btn-reset" onclick="resetAll()">Reset All</button>
+    </div>
+    <div id="status">Click on map to set the depot first</div>
+    <div class="legend">
+        <i style="background:#ff6d00"></i><span>Depot</span>
+        <i style="background:#00d4ff"></i><span>Delivery</span>
+    </div>
+</div>
+
+<script>
+// ── Map setup ──
+var map = L.map('map', {
+    center: [39.95, 116.35],
+    zoom: 15,
+    zoomControl: true,
+});
+
+L.tileLayer('http://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', {
+    subdomains: ['1','2','3','4'],
+    attribution: 'Amap',
+    maxZoom: 18,
+    minZoom: 3,
+}).addTo(map);
+
+// ── State ──
+var points = [];
+var depotSet = false;
+var pendingLatLng = null;
+
+// Depot icon
+var depotIcon = L.divIcon({
+    html: '<div style="background:#ff6d00;color:#fff;width:24px;height:24px;border-radius:50%;'+
+          'text-align:center;line-height:24px;font-weight:bold;font-size:14px;border:2px solid #fff">D</div>',
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
+});
+
+// Delivery point icon
+function deliveryIcon(n) {
+    return L.divIcon({
+        html: '<div style="background:#00d4ff;color:#000;width:22px;height:22px;border-radius:50%;'+
+              'text-align:center;line-height:22px;font-weight:bold;font-size:11px;border:2px solid #fff">'+n+'</div>',
+        iconSize: [22, 22],
+        iconAnchor: [11, 11],
+    });
+}
+
+// Layer group for markers
+var markerGroup = L.layerGroup().addTo(map);
+
+// ── Map click handler ──
+map.on('click', function(e) {
+    if (!depotSet) {
+        // First click = depot
+        points.push({
+            id: 0, type: 'depot', lon: e.latlng.lng.toFixed(6), lat: e.latlng.lat.toFixed(6),
+            demand: 0, tw_start: 0, tw_end: 86400, priority: 0
+        });
+        depotSet = true;
+        addMarker(0, e.latlng.lat, e.latlng.lng, true);
+        document.getElementById('status').textContent = 'Depot set! Now click for delivery points.';
+        document.getElementById('formSection').style.display = 'block';
+        renderTable();
+    } else {
+        // Delivery point — show form
+        pendingLatLng = e.latlng;
+        highlightPendingMarker(e.latlng);
+    }
+});
+
+var pendingMarker = null;
+function highlightPendingMarker(latlng) {
+    if (pendingMarker) markerGroup.removeLayer(pendingMarker);
+    var icon = L.divIcon({
+        html: '<div style="background:#ffea00;color:#000;width:22px;height:22px;border-radius:50%;'+
+              'text-align:center;line-height:22px;font-size:16px;font-weight:bold;border:2px dashed #000">?</div>',
+        iconSize: [22,22], iconAnchor: [11,11],
+    });
+    pendingMarker = L.marker([latlng.lat, latlng.lng], {icon: icon}).addTo(markerGroup);
+}
+
+// ── Confirm point ──
+function confirmPoint() {
+    if (!pendingLatLng) { alert('Click on map first!'); return; }
+
+    var demand = parseInt(document.getElementById('demand').value) || 10;
+    var priority = parseInt(document.getElementById('priority').value) || 2;
+    var tw_start = parseInt(document.getElementById('tw_start').value) || 28800;
+    var tw_end = parseInt(document.getElementById('tw_end').value) || 36000;
+
+    var newId = points.length;  // id=0 is depot, delivery starts at 1
+    points.push({
+        id: newId, type: 'delivery',
+        lon: pendingLatLng.lng.toFixed(6), lat: pendingLatLng.lat.toFixed(6),
+        demand: demand, tw_start: tw_start, tw_end: tw_end, priority: priority,
+    });
+
+    addMarker(newId, pendingLatLng.lat, pendingLatLng.lng, false);
+
+    if (pendingMarker) { markerGroup.removeLayer(pendingMarker); pendingMarker = null; }
+    pendingLatLng = null;
+
+    renderTable();
+    document.getElementById('status').textContent = 'Point #'+newId+' added. Click map for next.';
+}
+
+// ── Add marker to map ──
+var markers = {};
+function addMarker(id, lat, lng, isDepot) {
+    var icon = isDepot ? depotIcon : deliveryIcon(id);
+    var marker = L.marker([lat, lng], {icon: icon}).addTo(markerGroup);
+    marker.bindPopup((isDepot ? '<b>Depot</b>' : '<b>Point #'+id+'</b>') +
+        '<br>Lon: '+lng.toFixed(6)+'<br>Lat: '+lat.toFixed(6));
+    markers[id] = marker;
+}
+
+// ── Render table ──
+function renderTable() {
+    var tbody = document.getElementById('tableBody');
+    tbody.innerHTML = '';
+    points.forEach(function(p, idx) {
+        var tr = document.createElement('tr');
+        if (p.type === 'depot') tr.className = 'depot';
+        var tws = p.tw_start, twe = p.tw_end;
+        var twsStr = tws===0?'00:00':String(Math.floor(tws/3600)).padStart(2,'0')+':'+String(Math.floor((tws%3600)/60)).padStart(2,'0');
+        var tweStr = twe===86400?'24:00':String(Math.floor(twe/3600)).padStart(2,'0')+':'+String(Math.floor((twe%3600)/60)).padStart(2,'0');
+        tr.innerHTML = '<td>'+p.id+'</td><td>'+(p.type==='depot'?'DEPOT':'Delivery')+'</td>'+
+            '<td>'+p.lon+'</td><td>'+p.lat+'</td><td>'+p.demand+'</td>'+
+            '<td>'+twsStr+'</td><td>'+tweStr+'</td><td>'+p.priority+'</td>'+
+            (p.type!=='depot'?'<td><span class="del-btn" onclick="deletePoint('+idx+')">x</span></td>':'<td></td>');
+        tbody.appendChild(tr);
+    });
+    document.getElementById('count').textContent = points.length;
+}
+
+// ── Delete point ──
+function deletePoint(idx) {
+    var p = points[idx];
+    if (p.type === 'depot') return;
+    points.splice(idx, 1);
+    // Re-number
+    for (var i = 0; i < points.length; i++) {
+        points[i].id = i;
+    }
+    // Rebuild markers
+    markerGroup.clearLayers();
+    markers = {};
+    points.forEach(function(pt) {
+        addMarker(pt.id, parseFloat(pt.lat), parseFloat(pt.lon), pt.type==='depot');
+    });
+    renderTable();
+    document.getElementById('status').textContent = 'Point deleted.';
+}
+
+// ── Undo last ──
+function undoLast() {
+    if (points.length <= 1) return; // keep depot
+    var p = points.pop();
+    if (markers[p.id]) { markerGroup.removeLayer(markers[p.id]); delete markers[p.id]; }
+    renderTable();
+    document.getElementById('status').textContent = 'Last point undone.';
+}
+
+// ── Reset ──
+function resetAll() {
+    if (!confirm('Clear all points?')) return;
+    points = [];
+    depotSet = false;
+    pendingLatLng = null;
+    if (pendingMarker) { markerGroup.removeLayer(pendingMarker); pendingMarker = null; }
+    markerGroup.clearLayers();
+    markers = {};
+    renderTable();
+    document.getElementById('formSection').style.display = 'none';
+    document.getElementById('status').textContent = 'Click on map to set the depot first';
+}
+
+// ── Time window presets ──
+function setTW(start, end) {
+    document.getElementById('tw_start').value = start;
+    document.getElementById('tw_end').value = end;
+}
+
+// ── Export CSV ──
+function exportCSV() {
+    if (points.length === 0) { alert('No points selected!'); return; }
+
+    var header = 'id,x,y,demand,time_window_start,time_window_end,priority';
+    var rows = points.map(function(p) {
+        return [p.id, p.lon, p.lat, p.demand, p.tw_start, p.tw_end, p.priority].join(',');
+    });
+    var csv = header + '\n' + rows.join('\n');
+
+    var filename = prompt('Save as (in data/ folder):', 'my_points.csv');
+    if (!filename) return;
+    if (!filename.endsWith('.csv')) filename += '.csv';
+
+    var blob = new Blob([csv], {type: 'text/csv;charset=utf-8'});
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    document.getElementById('status').textContent =
+        'CSV downloaded: '+filename+' ('+points.length+' points). Move to data/ folder.';
+}
+</script>
+</body>
+</html>
