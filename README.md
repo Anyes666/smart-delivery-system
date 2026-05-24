@@ -65,6 +65,7 @@ python scripts/demo.py --compare
 │   ├── train_adaptive.py       # 训练自适应预测器
 │   ├── collect_all_day.py      # 全天数据采集 (8:00-22:00)
 │   └── warm_cache.py           # 预热距离缓存
+├── CLAUDE.md                   #与claude code对话核心内容
 └── data/                       # 配送数据 CSV
     ├── 校内游览.csv
     ├── 西直门外卖店.csv
