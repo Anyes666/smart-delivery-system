@@ -10,7 +10,7 @@ requires-python = ">=3.9"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "Smart Delivery Team"}
+    {name = "Yang Pengyu"}
 ]
 keywords = ["vrp", "vehicle-routing", "delivery", "optimization", "lightgbm", "online-learning", "adaptive-prediction"]
 classifiers = [
