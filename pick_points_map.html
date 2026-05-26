@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Amap Delivery Point Picker</title>
+<title>高德地图配送点选取器</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
@@ -48,35 +48,35 @@ body{font-family:'Segoe UI','Microsoft YaHei',sans-serif;display:flex;height:100
 <body>
 <div id="map"></div>
 <div id="panel">
-    <h2>Delivery Point Picker</h2>
+    <h2>配送点选取器</h2>
     <div class="section">
-        <h3>Step 1: Set Depot (click on map)</h3>
-        <p style="font-size:12px;color:#888">First click = depot (id=0). Then click for delivery points.</p>
+        <h3>第一步：设置配送中心（点击地图）</h3>
+        <p style="font-size:12px;color:#888">首次点击 = 配送中心（编号0）。之后点击添加配送点。</p>
     </div>
     <div class="section" id="formSection" style="display:none">
-        <h3>Step 2: Point Details</h3>
+        <h3>第二步：配送点详情</h3>
         <div class="form-row">
-            <label>Demand:</label>
+            <label>需求量：</label>
             <input type="number" id="demand" value="10" min="1" max="999">
         </div>
         <div class="form-row">
-            <label>Priority:</label>
+            <label>优先级：</label>
             <select id="priority">
-                <option value="1">1 - High</option>
-                <option value="2" selected>2 - Medium</option>
-                <option value="3">3 - Low</option>
+                <option value="1">1 - 高</option>
+                <option value="2" selected>2 - 中</option>
+                <option value="3">3 - 低</option>
             </select>
         </div>
         <div class="form-row">
-            <label>Time Window Start:</label>
+            <label>时间窗开始：</label>
             <input type="number" id="tw_start" value="28800" step="1800">
         </div>
         <div class="form-row">
-            <label>Time Window End:</label>
+            <label>时间窗结束：</label>
             <input type="number" id="tw_end" value="36000" step="1800">
         </div>
         <div class="tw-preset">
-            <span style="font-size:11px;color:#888;margin-right:4px">Presets:</span>
+            <span style="font-size:11px;color:#888;margin-right:4px">快捷设置：</span>
             <button onclick="setTW(28800,32400)">8:00-9:00</button>
             <button onclick="setTW(28800,36000)">8:00-10:00</button>
             <button onclick="setTW(28800,43200)">8:00-12:00</button>
@@ -84,35 +84,35 @@ body{font-family:'Segoe UI','Microsoft YaHei',sans-serif;display:flex;height:100
             <button onclick="setTW(36000,43200)">10:00-12:00</button>
             <button onclick="setTW(43200,54000)">12:00-15:00</button>
             <button onclick="setTW(28800,64800)">8:00-18:00</button>
-            <button onclick="setTW(0,86400)">All Day</button>
+            <button onclick="setTW(0,86400)">全天</button>
         </div>
         <div style="margin-top:10px">
             <button onclick="confirmPoint()" style="width:100%;padding:8px;background:#00ff95;color:#000;
                 border:none;border-radius:4px;font-weight:bold;cursor:pointer;font-size:14px">
-                Confirm Point
+                确认添加
             </button>
         </div>
     </div>
     <div class="section">
-        <h3>Selected Points (<span id="count">0</span>)</h3>
+        <h3>已选配送点（<span id="count">0</span>）</h3>
         <div id="tableWrap">
             <table id="pointTable">
                 <thead><tr>
-                    <th>ID</th><th>Type</th><th>Lon</th><th>Lat</th><th>Demand</th><th>TW Start</th><th>TW End</th><th>Pri</th><th></th>
+                    <th>编号</th><th>类型</th><th>经度</th><th>纬度</th><th>需求量</th><th>时间窗开始</th><th>时间窗结束</th><th>优先级</th><th></th>
                 </tr></thead>
                 <tbody id="tableBody"></tbody>
             </table>
         </div>
     </div>
     <div class="actions">
-        <button class="btn-export" onclick="exportCSV()">Download CSV</button>
-        <button class="btn-undo" onclick="undoLast()">Undo Last Point</button>
-        <button class="btn-reset" onclick="resetAll()">Reset All</button>
+        <button class="btn-export" onclick="exportCSV()">下载 CSV</button>
+        <button class="btn-undo" onclick="undoLast()">撤销上一点</button>
+        <button class="btn-reset" onclick="resetAll()">全部重置</button>
     </div>
-    <div id="status">Click on map to set the depot first</div>
+    <div id="status">请先点击地图设置配送中心</div>
     <div class="legend">
-        <i style="background:#ff6d00"></i><span>Depot</span>
-        <i style="background:#00d4ff"></i><span>Delivery</span>
+        <i style="background:#ff6d00"></i><span>配送中心</span>
+        <i style="background:#00d4ff"></i><span>配送点</span>
     </div>
 </div>
 
@@ -167,7 +167,7 @@ map.on('click', function(e) {
         });
         depotSet = true;
         addMarker(0, e.latlng.lat, e.latlng.lng, true);
-        document.getElementById('status').textContent = 'Depot set! Now click for delivery points.';
+        document.getElementById('status').textContent = '配送中心已设置！请点击地图添加配送点。';
         document.getElementById('formSection').style.display = 'block';
         renderTable();
     } else {
@@ -190,12 +190,16 @@ function highlightPendingMarker(latlng) {
 
 // ── Confirm point ──
 function confirmPoint() {
-    if (!pendingLatLng) { alert('Click on map first!'); return; }
+    if (!pendingLatLng) { alert('请先点击地图！'); return; }
 
-    var demand = parseInt(document.getElementById('demand').value) || 10;
-    var priority = parseInt(document.getElementById('priority').value) || 2;
-    var tw_start = parseInt(document.getElementById('tw_start').value) || 28800;
-    var tw_end = parseInt(document.getElementById('tw_end').value) || 36000;
+    var demand = parseInt(document.getElementById('demand').value);
+    if (isNaN(demand)) demand = 10;
+    var priority = parseInt(document.getElementById('priority').value);
+    if (isNaN(priority)) priority = 2;
+    var tw_start = parseInt(document.getElementById('tw_start').value);
+    if (isNaN(tw_start)) tw_start = 28800;
+    var tw_end = parseInt(document.getElementById('tw_end').value);
+    if (isNaN(tw_end)) tw_end = 36000;
 
     var newId = points.length;  // id=0 is depot, delivery starts at 1
     points.push({
@@ -210,7 +214,7 @@ function confirmPoint() {
     pendingLatLng = null;
 
     renderTable();
-    document.getElementById('status').textContent = 'Point #'+newId+' added. Click map for next.';
+    document.getElementById('status').textContent = '已添加第 '+newId+' 个配送点，继续点击地图添加。';
 }
 
 // ── Add marker to map ──
@@ -218,8 +222,8 @@ var markers = {};
 function addMarker(id, lat, lng, isDepot) {
     var icon = isDepot ? depotIcon : deliveryIcon(id);
     var marker = L.marker([lat, lng], {icon: icon}).addTo(markerGroup);
-    marker.bindPopup((isDepot ? '<b>Depot</b>' : '<b>Point #'+id+'</b>') +
-        '<br>Lon: '+lng.toFixed(6)+'<br>Lat: '+lat.toFixed(6));
+    marker.bindPopup((isDepot ? '<b>配送中心</b>' : '<b>配送点 #'+id+'</b>') +
+        '<br>经度：'+lng.toFixed(6)+'<br>纬度：'+lat.toFixed(6));
     markers[id] = marker;
 }
 
@@ -233,7 +237,7 @@ function renderTable() {
         var tws = p.tw_start, twe = p.tw_end;
         var twsStr = tws===0?'00:00':String(Math.floor(tws/3600)).padStart(2,'0')+':'+String(Math.floor((tws%3600)/60)).padStart(2,'0');
         var tweStr = twe===86400?'24:00':String(Math.floor(twe/3600)).padStart(2,'0')+':'+String(Math.floor((twe%3600)/60)).padStart(2,'0');
-        tr.innerHTML = '<td>'+p.id+'</td><td>'+(p.type==='depot'?'DEPOT':'Delivery')+'</td>'+
+        tr.innerHTML = '<td>'+p.id+'</td><td>'+(p.type==='depot'?'配送中心':'配送点')+'</td>'+
             '<td>'+p.lon+'</td><td>'+p.lat+'</td><td>'+p.demand+'</td>'+
             '<td>'+twsStr+'</td><td>'+tweStr+'</td><td>'+p.priority+'</td>'+
             (p.type!=='depot'?'<td><span class="del-btn" onclick="deletePoint('+idx+')">x</span></td>':'<td></td>');
@@ -258,7 +262,7 @@ function deletePoint(idx) {
         addMarker(pt.id, parseFloat(pt.lat), parseFloat(pt.lon), pt.type==='depot');
     });
     renderTable();
-    document.getElementById('status').textContent = 'Point deleted.';
+    document.getElementById('status').textContent = '已删除配送点。';
 }
 
 // ── Undo last ──
@@ -267,12 +271,12 @@ function undoLast() {
     var p = points.pop();
     if (markers[p.id]) { markerGroup.removeLayer(markers[p.id]); delete markers[p.id]; }
     renderTable();
-    document.getElementById('status').textContent = 'Last point undone.';
+    document.getElementById('status').textContent = '已撤销上一个点。';
 }
 
 // ── Reset ──
 function resetAll() {
-    if (!confirm('Clear all points?')) return;
+    if (!confirm('确定清除所有点？')) return;
     points = [];
     depotSet = false;
     pendingLatLng = null;
@@ -281,7 +285,7 @@ function resetAll() {
     markers = {};
     renderTable();
     document.getElementById('formSection').style.display = 'none';
-    document.getElementById('status').textContent = 'Click on map to set the depot first';
+    document.getElementById('status').textContent = '请先点击地图设置配送中心';
 }
 
 // ── Time window presets ──
@@ -292,7 +296,7 @@ function setTW(start, end) {
 
 // ── Export CSV ──
 function exportCSV() {
-    if (points.length === 0) { alert('No points selected!'); return; }
+    if (points.length === 0) { alert('还没有选择配送点！'); return; }
 
     var header = 'id,x,y,demand,time_window_start,time_window_end,priority';
     var rows = points.map(function(p) {
@@ -300,7 +304,7 @@ function exportCSV() {
     });
     var csv = header + '\n' + rows.join('\n');
 
-    var filename = prompt('Save as (in data/ folder):', 'my_points.csv');
+    var filename = prompt('保存为（保存到 data/ 目录）：', 'my_points.csv');
     if (!filename) return;
     if (!filename.endsWith('.csv')) filename += '.csv';
 
@@ -315,7 +319,7 @@ function exportCSV() {
     URL.revokeObjectURL(url);
 
     document.getElementById('status').textContent =
-        'CSV downloaded: '+filename+' ('+points.length+' points). Move to data/ folder.';
+        'CSV 已下载：'+filename+'（'+points.length+' 个点）。请移动到 data/ 目录。';
 }
 </script>
 </body>
