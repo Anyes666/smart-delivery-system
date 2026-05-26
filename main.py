@@ -663,7 +663,7 @@ class DeliverySystem:
         """双模型融合拥堵预测 — LightGBM + 自适应神经网络。
 
         LightGBM (39特征, 批量训练, RMSE~60s) 提供基础乘数,
-        自适应模型 (10特征, 在线SGD) 提供残差修正。
+        自适应模型 (20特征, 在线SGD) 提供残差修正。
         两者加权融合: 70% LightGBM + 30% 自适应。
         """
         import numpy as np
@@ -1025,7 +1025,7 @@ def main():
     print(f"找到 {len(available_files)} 个文件: {available_files}")
 
     # 使用纯文件名，load_all_data 内部会自动拼接 data/ 目录
-    filepath = "provincial_capitals.csv"
+    filepath = "校内游览.csv"
 
     # 创建系统实例并运行
     system = DeliverySystem()

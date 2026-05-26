@@ -4,7 +4,7 @@
 替代硬编码交通惩罚曲线。每次高德 API 返回真实耗时后,
 自动用 SGD 更新神经网络权重, 越跑越准。
 
-方法: 神经网络回归模型 (10维输入 → 64 ReLU → 32 ReLU → 拥堵乘数输出),
+方法: 神经网络回归模型 (20维输入 → 64 ReLU → 32 ReLU → 拥堵乘数输出),
       配合在线 SGD 更新 + 探索噪声实现持续自适应。
 """
 
@@ -597,8 +597,8 @@ class AdaptiveCongestionPredictor:
         if inst._running_loss is not None and not np.isfinite(inst._running_loss):
             inst._running_loss = None
         inst._lr = data.get("lr", 0.0003)
-        inst._feat_mean = data.get("feat_mean", np.zeros(10, dtype=np.float32))
-        inst._feat_std = data.get("feat_std", np.ones(10, dtype=np.float32))
+        inst._feat_mean = data.get("feat_mean", np.zeros(inst._input_dim, dtype=np.float32))
+        inst._feat_std = data.get("feat_std", np.ones(inst._input_dim, dtype=np.float32))
         inst._feat_frozen = data.get("feat_frozen", False)
         logger.info(f"自适应预测模型已加载: {path} (updates={inst._update_count}, "
                      f"loss={inst._running_loss})")

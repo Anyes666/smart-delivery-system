@@ -6,7 +6,7 @@
 
 - **三层优化管线**：距离矩阵 → ML 行程时间预测 → 自适应拥堵乘数 → VRP 求解
 - **异构车队**：4 种车型（微/轻/中/重型封闭货车），对标 JT/T 1325-2020 标准
-- **真实路网**：高德 Web API 构建 N×N 距离矩阵，支持道路跟随可视化
+- **真实路网**：高德 Web API 构建 N×N 距离矩阵，支持道路跟随（Polyline）可视化
 - **ML 预测**：LightGBM 39 维特征，点对点行程时间预测
 - **在线自适应**：20→64→32→1 神经网络，SGD 在线学习，边跑边准
 - **交通模拟**：早晚高峰拥堵、随机事故、红绿灯周期检测
@@ -46,7 +46,7 @@ python scripts/demo.py --compare
 
 ```
 ├── app.py                      # Streamlit Web 界面（4 页签）
-├── main.py                     # 核心调度引擎 DeliverySystem
+├── main.py                     # 核心调度引擎（也可直接运行 python main.py）
 ├── config/
 │   └── settings.py             # 所有配置参数（API、车型、算法、可视化）
 ├── src/
@@ -69,7 +69,8 @@ python scripts/demo.py --compare
 └── data/                       # 配送数据 CSV
     ├── 校内游览.csv
     ├── 西直门外卖店.csv
-    └── 北京各个区快递配送.csv
+    ├── 北京各个区快递配送.csv
+    └── example.csv
 ```
 
 ## VRP 算法对比

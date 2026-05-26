@@ -73,7 +73,9 @@ class EnhancedMapRenderer:
         ])
 
         self.has_road_network = (
-            road_network is not None and road_network.graph is not None
+            road_network is not None
+            and (road_network.graph is not None
+                 or hasattr(road_network, 'get_route_geometry'))
         )
         self.has_congestion = congestion_engine is not None
         self.has_lights = traffic_lights is not None

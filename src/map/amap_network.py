@@ -650,10 +650,12 @@ class AmapRoadNetwork:
 
     @staticmethod
     def _euclidean_fallback(
-        p1: Tuple[float, float], p2: Tuple[float, float], detour: float = 1.3
+        p1: Tuple[float, float], p2: Tuple[float, float],
+        city: str = "default",
     ) -> float:
-        """Approximate road distance as Euclidean x detour factor."""
+        """Approximate road distance as Euclidean × city detour factor."""
         import numpy as np
+        detour = AmapRoadNetwork.CITY_DETOUR_FACTORS.get(city, 1.35)
         lon1, lat1 = float(p1[0]), float(p1[1])
         lon2, lat2 = float(p2[0]), float(p2[1])
         mid_lat = np.radians((lat1 + lat2) / 2.0)
