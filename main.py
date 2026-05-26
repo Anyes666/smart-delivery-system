@@ -412,18 +412,15 @@ class DeliverySystem:
                 sim_time_seconds=sim_time,
             )
             routes = result.routes if result else None
-            # 无解或部分解 -> 逐步放宽约束重试
-            if result is None or result.is_overflow:
-                if self.time_windows is not None:
-                    tw_info = self._check_time_window_feasibility()
-                    print(f"  [WARN] 时间窗约束导致无解 ({tw_info})")
-                    print("  -> 放宽时间窗, 移除优先级, 延长求解时间重试...")
-                else:
-                    print("  [WARN] 求解失败, 延长求解时间重试...")
+            # 仅在真正无解 (result is None) 时放宽约束重试
+            # overflow 是容量不足, 更长时间搜索无法解决, 直接接受部分解
+            if result is None:
+                tw_info = self._check_time_window_feasibility() if self.time_windows else "未知"
+                print(f"  [WARN] 无解 ({tw_info}), 放宽时间窗重试...")
                 result = self.vrp_solver.solve_with_ortools(
                     distance_matrix=adjusted_matrix.tolist(),
                     demands=self.demands,
-                    time_limit=settings.TIME_LIMIT_SECONDS * 3,
+                    time_limit=settings.TIME_LIMIT_SECONDS,
                     time_windows=None,
                     travel_time_predictor=self.travel_time_predictor,
                     points=self.points,
@@ -432,6 +429,9 @@ class DeliverySystem:
                 routes = result.routes if result else None
                 if result is not None:
                     self._time_windows_relaxed = True
+            elif result.is_overflow:
+                print(f"  [INFO] {len(result.overflow_nodes)} 个点容量溢出, "
+                      f"增加车辆数或调整需求可消除")
         elif algorithm == 'greedy':
             result = self.vrp_solver.greedy_vrp_solver(
                 distance_matrix=adjusted_matrix.tolist(),
@@ -457,12 +457,12 @@ class DeliverySystem:
                 sim_time_seconds=sim_time,
             )
             routes = result.routes if result else None
-            if result is None or result.is_overflow:
-                print("  -> 放宽约束重试...")
+            if result is None:
+                print("  -> 无解, 放宽约束重试...")
                 result = self.vrp_solver.solve_with_ortools(
                     distance_matrix=adjusted_matrix.tolist(),
                     demands=self.demands,
-                    time_limit=settings.TIME_LIMIT_SECONDS * 3,
+                    time_limit=settings.TIME_LIMIT_SECONDS,
                     time_windows=None,
                     travel_time_predictor=self.travel_time_predictor,
                     points=self.points,
@@ -471,6 +471,8 @@ class DeliverySystem:
                 routes = result.routes if result else None
                 if result is not None:
                     self._time_windows_relaxed = True
+            elif result.is_overflow:
+                print(f"  [INFO] {len(result.overflow_nodes)} 个点容量溢出")
 
         if routes and self._validate_routes(routes):
             self.routes = routes

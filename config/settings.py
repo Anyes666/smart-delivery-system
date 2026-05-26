@@ -31,7 +31,7 @@ VEHICLE_FIXED_COST = 10000          # 默认单车启用成本 (兼容旧版)
 DEPOT_INDEX = 0
 MAP_CENTER = (31.2304, 121.4737)  # (纬度, 经度) - 上海
 ZOOM_LEVEL = 12
-TIME_LIMIT_SECONDS = 30
+TIME_LIMIT_SECONDS = 20  # 100点以内 20s 足够 GLS 收敛到近优解
 
 # 算法参数
 ALGORITHM_PARAMS = {

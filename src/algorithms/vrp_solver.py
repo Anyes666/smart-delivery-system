@@ -163,8 +163,9 @@ class VRPSolver:
             routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC)
         params.local_search_metaheuristic = (
             routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH)
-        params.time_limit.seconds = time_limit
-        params.use_full_propagation = True
+        # 自适应时间上限: 20点≈4s, 50点≈10s, 100点=20s
+        params.time_limit.seconds = min(time_limit, max(1, num_nodes // 5))
+        params.use_full_propagation = False
 
         solution = None
         try:
