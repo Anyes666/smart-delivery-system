@@ -176,7 +176,8 @@ def get_model_status():
 
 
 def run_optimization(filepath: str, num_vehicles: int, algorithm: str,
-                     sim_time_seconds: int = 36000) -> dict:
+                     sim_time_seconds: int = 36000,
+                     simulated_collection: bool = False) -> dict:
     """运行一次完整优化并返回结果."""
     import logging
     logging.disable(logging.CRITICAL)
@@ -185,6 +186,7 @@ def run_optimization(filepath: str, num_vehicles: int, algorithm: str,
     from main import DeliverySystem
 
     settings.DEFAULT_SIMULATION_TIME = sim_time_seconds
+    settings.SIMULATED_COLLECTION = simulated_collection
 
     system = DeliverySystem(use_road_network=True)
     success = system.run_full_pipeline(
@@ -290,6 +292,7 @@ with st.sidebar:
         st.caption(f"模拟时间: {custom_time.strftime('%H:%M')}")
 
     st.session_state.sim_time_seconds = sim_time_seconds
+    st.session_state.use_real_time = use_real_time
 
     st.markdown("---")
 
@@ -325,7 +328,8 @@ if run_btn and data_filepath:
     with st.spinner("运行中... 正在调用高德 API 获取真实路网距离..."):
         t0 = time.time()
         result = run_optimization(data_filepath, num_vehicles, algorithm,
-                                  sim_time_seconds=st.session_state.get("sim_time_seconds", 36000))
+                                  sim_time_seconds=st.session_state.get("sim_time_seconds", 36000),
+                                  simulated_collection=not st.session_state.get("use_real_time", True))
         elapsed = time.time() - t0
 
     if result["success"]:
