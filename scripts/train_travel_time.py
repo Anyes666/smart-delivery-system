@@ -62,10 +62,6 @@ def cmd_train(city: str = None):
         total = cities[city]["total"]
         print(f"自动选择城市: {city} ({total} 条样本)")
 
-    if total < 500:
-        print(f"[ERROR] {city} 数据不足: {total} < 500")
-        return
-
     samples = TravelTimeDataCollector.load_all_samples(city)
     print("=" * 60)
     print(f"  训练 {city} 行程时间预测模型")
@@ -87,6 +83,15 @@ def cmd_train(city: str = None):
     if len(fake_samples) > len(real_samples) * 5:
         print(f"  ⚠ 快速采集占比过高 ({len(fake_samples)/max(len(samples),1)*100:.0f}%)")
         print(f"    时段预测可能不准, 建议补 3-5 次真实时间采集")
+
+    # 只保留真实时间样本训练: 模拟时间数据的 duration 是调用 API 时刻的
+    # 真实路况, 与模拟的 hour 不匹配, 会导致特征与标签矛盾
+    samples = real_samples
+    print(f"\n  训练样本 (仅真实时间): {len(samples)} 条")
+
+    if len(samples) < 500:
+        print(f"[ERROR] 真实时间样本不足: {len(samples)} < 500")
+        return
 
     # 用样本中心作为城市中心
     all_lons = [s["origin_lon"] for s in samples] + [s["dest_lon"] for s in samples]

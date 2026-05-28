@@ -1,5 +1,4 @@
 import logging
-import networkx as nx
 import numpy as np
 from typing import Optional
 
@@ -51,41 +50,6 @@ class ShortestPathCalculator:
                 dist_mtx[i][j] = km
                 dist_mtx[j][i] = km
         return dist_mtx
-    
-    def dijkstra_path(self, start_idx, end_idx):
-        """Dijkstra算法计算单源最短路径"""
-        G = nx.Graph()
-        
-        # 添加节点
-        for i in range(self.n):
-            G.add_node(i)
-        
-        # 添加边（基于距离矩阵）
-        for i in range(self.n):
-            for j in range(i + 1, self.n):
-                G.add_edge(i, j, weight=self.distance_matrix[i][j])
-        
-        try:
-            path = nx.dijkstra_path(G, start_idx, end_idx, weight='weight')
-            return path
-        except nx.NetworkXNoPath:
-            return None
-    
-    def floyd_warshall_all_pairs(self):
-        """Floyd-Warshall算法计算所有点对最短路径"""
-        G = nx.Graph()
-        
-        # 添加节点和边
-        for i in range(self.n):
-            G.add_node(i)
-            for j in range(i + 1, self.n):
-                G.add_edge(i, j, weight=self.distance_matrix[i][j])
-        
-        # 计算所有点对最短路径
-        paths = dict(nx.all_pairs_dijkstra_path(G, weight='weight'))
-        distances = dict(nx.all_pairs_dijkstra_path_length(G, weight='weight'))
-        
-        return paths, distances
     
     def calculate_tsp_path(self, start_idx=0):
         """使用贪心算法解决TSP问题（单车辆情况）"""

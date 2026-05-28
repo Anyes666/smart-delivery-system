@@ -42,27 +42,35 @@ class VRPSolver:
         self, distance_matrix, demands,
         time_limit=30, time_windows=None,
         travel_time_predictor=None, points=None, sim_time_seconds=None,
+        travel_time_matrix=None,
     ) -> Optional[UnifiedSolution]:
         """
         OR-Tools 求解 — 支持异构车队、自动车队规模、时间窗口、ML预测。
 
         每辆车独立绑定车型 → 不同 Capacity / FixedCost / CostPerKm。
         OR-Tools 内部自动权衡"多派一辆小车 vs 少派一辆大车"。
+
+        Parameters:
+            distance_matrix: N×N 物理距离矩阵 (km), 用于距离维度统计。
+            travel_time_matrix: N×N 行程时间矩阵 (秒), 可选。提供时用于
+                arc cost (时间价值货币化) 和时间窗约束, 实现广义成本语义。
         """
         num_nodes = len(distance_matrix)
         AVG_SPEED_KMH = 40.0
         depot = self.depot_index
 
         # ── 构建车型数组 ──
-        # 轮询分配车型: [微型, 轻型, 中型, 重型, 微型, 轻型, ...]
-        # 确保小 max_total 时也能覆盖多种车型
-        types_flat = []
-        for i in range(self.fleet.max_total):
-            types_flat.append(self.fleet.types[i % len(self.fleet.types)])
+        # 求解阶段全部使用最大容量车型, 避免小 max_total 时轮询分配
+        # (如 3 辆车 → [微型,轻型,中型]) 导致路线在过小的容量约束下构建。
+        # 求解后由 _optimize_vehicle_assignments 降级为成本最优车型。
+        max_type = max(self.fleet.types, key=lambda t: t.capacity)
+        min_fixed = min(t.fixed_cost for t in self.fleet.types)
 
+        types_flat = [max_type] * self.fleet.max_total
         num_vehicles = len(types_flat)
         capacities = [t.capacity for t in types_flat]
-        fixed_costs = [int(t.fixed_cost) for t in types_flat]
+        # 使用最小固定成本, 避免高固定成本抑制车辆使用
+        fixed_costs = [int(min_fixed)] * num_vehicles
         cost_per_km = [t.cost_per_km for t in types_flat]
 
         logger.info(
@@ -74,7 +82,7 @@ class VRPSolver:
         manager = pywrapcp.RoutingIndexManager(num_nodes, num_vehicles, depot)
         routing = pywrapcp.RoutingModel(manager)
 
-        # ── 距离回调 (基准) ──
+        # ── 距离回调 (基准, 用于距离维度统计) ──
         def base_distance_cb(from_idx, to_idx):
             fn = manager.IndexToNode(from_idx)
             tn = manager.IndexToNode(to_idx)
@@ -83,15 +91,24 @@ class VRPSolver:
         base_idx = routing.RegisterTransitCallback(base_distance_cb)
 
         # ── 异构成本回调 ──
-        # 每辆车的成本 = 距离 × cost_per_km (该车型的每公里成本)
+        # 有 travel_time_matrix 时: arc_cost = travel_time_sec × (cpm × AVG_SPEED / 3600)
+        #   即广义成本 generalized_cost = distance·cpm × (actual_time / free_flow_time)
+        # 无 travel_time_matrix 时: arc_cost = distance_km × cpm (回退到纯距离成本)
+        has_tt = travel_time_matrix is not None
+
         def cost_cb(vehicle_id):
             cpm = cost_per_km[vehicle_id]
-
-            def cb(from_idx, to_idx):
-                fn = manager.IndexToNode(from_idx)
-                tn = manager.IndexToNode(to_idx)
-                return int(distance_matrix[fn][tn] * cpm)
-
+            if has_tt:
+                cost_per_sec = cpm * AVG_SPEED_KMH / 3600.0
+                def cb(from_idx, to_idx):
+                    fn = manager.IndexToNode(from_idx)
+                    tn = manager.IndexToNode(to_idx)
+                    return int(travel_time_matrix[fn][tn] * cost_per_sec)
+            else:
+                def cb(from_idx, to_idx):
+                    fn = manager.IndexToNode(from_idx)
+                    tn = manager.IndexToNode(to_idx)
+                    return int(distance_matrix[fn][tn] * cpm)
             return cb
 
         # 注册每辆车独立的成本回调
@@ -134,6 +151,11 @@ class VRPSolver:
                     return int(travel_time_predictor.predict(
                         points[fn], points[tn],
                         distance_matrix[fn][tn], ml_hour, ml_dow))
+            elif has_tt:
+                # 直接使用预计算的行程时间矩阵 (已含拥堵)
+                def time_cb(from_idx, to_idx):
+                    fn, tn = manager.IndexToNode(from_idx), manager.IndexToNode(to_idx)
+                    return int(travel_time_matrix[fn][tn])
             else:
                 def time_cb(from_idx, to_idx):
                     fn, tn = manager.IndexToNode(from_idx), manager.IndexToNode(to_idx)
@@ -147,13 +169,33 @@ class VRPSolver:
             routing.AddDimension(time_idx, max_slack, 86400, True, 'Time')
             td = routing.GetDimensionOrDie('Time')
 
+            # ── 软时间窗: 硬约束放宽 + 软边界惩罚 ──
+            from config import settings
+            sw_config = getattr(settings, 'SOFT_TIME_WINDOW_CONFIG', {})
+            use_soft_tw = sw_config.get('enabled', True)
+            hard_slack = sw_config.get('hard_bound_slack', 7200)
+            early_penalty = sw_config.get('early_penalty_per_min', 100) / 60.0  # → 每秒
+            late_penalty = sw_config.get('late_penalty_per_min', 500) / 60.0
+
             for node in range(num_nodes):
                 idx = manager.NodeToIndex(node)
                 if node == depot:
                     td.CumulVar(idx).SetRange(0, 86400)
                 else:
                     tw = time_windows[node]
-                    td.CumulVar(idx).SetRange(max(0, tw[0]), min(tw[1], 86400))
+                    if use_soft_tw:
+                        # 硬约束: 原始时间窗 ± hard_slack (确保始终有可行解)
+                        td.CumulVar(idx).SetRange(
+                            max(0, tw[0] - hard_slack),
+                            min(tw[1] + hard_slack, 86400),
+                        )
+                        # 软约束: 在原始时间窗边界施加线性惩罚
+                        if early_penalty > 0:
+                            td.SetCumulVarSoftLowerBound(idx, tw[0], int(early_penalty))
+                        if late_penalty > 0:
+                            td.SetCumulVarSoftUpperBound(idx, tw[1], int(late_penalty))
+                    else:
+                        td.CumulVar(idx).SetRange(max(0, tw[0]), min(tw[1], 86400))
             for vid in range(num_vehicles):
                 td.CumulVar(routing.Start(vid)).SetRange(0, 86400)
 
@@ -377,10 +419,12 @@ class VRPSolver:
             vt = self._best_type_for_load(total_demand, distance_matrix, cluster_nodes)
             if vt.capacity < total_demand:
                 # 一辆车装不下 → 拆分为多车 (简单贪心)
-                overflow.extend(self._split_cluster(
+                split_overflow, split_dist = self._split_cluster(
                     cluster_nodes, vt, distance_matrix, demands,
-                    routes, assignments, total_dist
-                ))
+                    routes, assignments,
+                )
+                overflow.extend(split_overflow)
+                total_dist += split_dist
                 continue
 
             # 簇内最近邻TSP + 2-opt局部优化
@@ -469,14 +513,15 @@ class VRPSolver:
         return best
 
     def _split_cluster(self, nodes, vt, dist_mtx, demands,
-                       routes, assignments, total_dist):
-        """将超容量的簇拆分为多辆车."""
+                       routes, assignments):
+        """将超容量的簇拆分为多辆车, 返回 (overflow, added_dist)."""
         overflow = []
         remaining = sorted(nodes, key=lambda n: -demands[n])
         current_route = [self.depot_index]
         current_load = 0
         current = self.depot_index
         dist = 0.0
+        added_dist = 0.0
 
         while remaining:
             best_n, best_d = None, float('inf')
@@ -492,6 +537,7 @@ class VRPSolver:
                     current_route = self._two_opt_improve(current_route, dist_mtx)
                     routes.append(current_route)
                     assignments.append(vt.name)
+                    added_dist += dist
                 if len(routes) >= self.fleet.max_total:
                     overflow.extend(remaining)
                     break
@@ -512,10 +558,11 @@ class VRPSolver:
             current_route = self._two_opt_improve(current_route, dist_mtx)
             routes.append(current_route)
             assignments.append(vt.name)
+            added_dist += dist
         elif remaining:
             overflow.extend(remaining)
 
-        return overflow
+        return overflow, added_dist
 
     @staticmethod
     def _tsp_nearest_neighbor(nodes, dist_mtx, depot):

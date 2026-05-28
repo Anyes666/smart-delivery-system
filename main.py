@@ -28,6 +28,18 @@ from src.visualization.plotly_animation import PlotlyAnimator
 
 logger = logging.getLogger(__name__)
 
+
+def _road_label():
+    """根据配置返回路网标签字符串."""
+    from config import settings
+    provider = getattr(settings, 'ROAD_NETWORK_PROVIDER', 'osmnx')
+    if provider == 'amap':
+        return '高德路网'
+    elif getattr(settings, 'USE_REAL_ROAD_NETWORK', True):
+        return 'OSM路网'
+    return '欧氏距离'
+
+
 class DeliverySystem:
     def __init__(self, use_road_network: bool = None):
         """初始化配送系统
@@ -197,8 +209,10 @@ class DeliverySystem:
                 self.travel_time_collector = TravelTimeDataCollector()
                 # 检查是否为模拟采集模式 (--fast)
                 if getattr(settings, 'SIMULATED_COLLECTION', False):
-                    self.travel_time_collector.set_real_time_mode(False)
-                    print("  [INFO] 模拟采集模式: real_time=False")
+                    sim_time = getattr(settings, 'DEFAULT_SIMULATION_TIME', 36000)
+                    self.travel_time_collector.set_real_time_mode(False, sim_time)
+                    print(f"  [INFO] 模拟采集模式: real_time=False, "
+                          f"sim_time={sim_time//3600:02d}:{(sim_time%3600)//60:02d}")
                 self.road_network._collector = self.travel_time_collector
                 stats = self.travel_time_collector.stats()
                 print(f"[OK] ML数据采集器就绪 (已有 {stats['total']} 条样本)")
@@ -296,8 +310,8 @@ class DeliverySystem:
                 self.distance_matrix = sp_calc.distance_matrix
 
                 print(f"成功加载 {self.n_points} 个点的数据。")
-                print(f"距离矩阵形状: {self.distance_matrix.shape} "
-                      f"({'OSM路网' if self.use_road_network else '欧氏距离'})")
+                print(f"距离矩阵形状: {self.distance_matrix.shape} ("
+                      f"{_road_label()})")
                 return True
             except FileNotFoundError as e:
                 print(f"文件未找到: {e}")
@@ -327,7 +341,15 @@ class DeliverySystem:
             self.points = sample_coords
             self.demands = sample_demands
             n = len(sample_coords)
-            self.time_windows = [(0, 86400)] * n
+            # 模拟真实配送场景: 仓库全天开放, 各配送点有不同时间窗
+            self.time_windows = [
+                (0, 86400),       # 配送中心 (全天)
+                (28800, 43200),   # 8:00-12:00 上午配送
+                (36000, 50400),   # 10:00-14:00 中午配送
+                (28800, 43200),   # 8:00-12:00
+                (43200, 57600),   # 12:00-16:00 下午配送
+                (36000, 54000),   # 10:00-15:00
+            ]
             self.priorities = [1] * n
             self.ids = list(range(n))
             self.n_points = n
@@ -339,7 +361,7 @@ class DeliverySystem:
             self.distance_matrix = sp_calc.distance_matrix
 
             print(f"示例数据加载完成。距离矩阵形状: {self.distance_matrix.shape} "
-                  f"({'OSM路网' if self.use_road_network else '欧氏距离'})")
+                  f"({_road_label()})")
             return True
     
     def calculate_optimal_routes(self, num_vehicles: int = None, algorithm: str = 'ortools') -> bool:
@@ -387,12 +409,11 @@ class DeliverySystem:
             except Exception as e:
                 print(f"  [INFO] ML模型加载失败: {e}")
 
-        # Apply traffic penalties to distance matrix
+        # Compute travel-time matrix from congestion models
         sim_time = getattr(settings, 'DEFAULT_SIMULATION_TIME', 36000)
         self.sim_time = sim_time  # 保存以便后续使用
-        adjusted_matrix = self._apply_traffic_penalties(
-            self.distance_matrix.copy(), sim_time
-        )
+        clean_dist = self.distance_matrix.copy()
+        travel_time_sec = self._compute_travel_time_matrix(clean_dist, sim_time)
 
         from src.algorithms.vehicle_types import Fleet, VehicleType
         fleet = Fleet(
@@ -400,16 +421,17 @@ class DeliverySystem:
             max_total=num_vehicles,
         )
         self.vrp_solver = VRPSolver(fleet=fleet, depot_index=self.depot_index)
-        
+
         if algorithm == 'ortools':
             result = self.vrp_solver.solve_with_ortools(
-                distance_matrix=adjusted_matrix.tolist(),
+                distance_matrix=clean_dist.tolist(),
                 demands=self.demands,
                 time_limit=settings.TIME_LIMIT_SECONDS,
                 time_windows=self.time_windows,
                 travel_time_predictor=self.travel_time_predictor,
                 points=self.points,
                 sim_time_seconds=sim_time,
+                travel_time_matrix=travel_time_sec.tolist(),
             )
             routes = result.routes if result else None
             # 仅在真正无解 (result is None) 时放宽约束重试
@@ -418,13 +440,14 @@ class DeliverySystem:
                 tw_info = self._check_time_window_feasibility() if self.time_windows else "未知"
                 print(f"  [WARN] 无解 ({tw_info}), 放宽时间窗重试...")
                 result = self.vrp_solver.solve_with_ortools(
-                    distance_matrix=adjusted_matrix.tolist(),
+                    distance_matrix=clean_dist.tolist(),
                     demands=self.demands,
                     time_limit=settings.TIME_LIMIT_SECONDS,
                     time_windows=None,
                     travel_time_predictor=self.travel_time_predictor,
                     points=self.points,
                     sim_time_seconds=sim_time,
+                    travel_time_matrix=travel_time_sec.tolist(),
                 )
                 routes = result.routes if result else None
                 if result is not None:
@@ -434,13 +457,13 @@ class DeliverySystem:
                       f"增加车辆数或调整需求可消除")
         elif algorithm == 'greedy':
             result = self.vrp_solver.greedy_vrp_solver(
-                distance_matrix=adjusted_matrix.tolist(),
+                distance_matrix=clean_dist.tolist(),
                 demands=self.demands,
             )
             routes = result.routes
         elif algorithm == 'cluster':
             result = self.vrp_solver.cluster_first_route_second(
-                distance_matrix=adjusted_matrix.tolist(),
+                distance_matrix=clean_dist.tolist(),
                 demands=self.demands,
                 points=self.points,
             )
@@ -448,25 +471,27 @@ class DeliverySystem:
         else:
             print(f"警告: 未知算法 '{algorithm}'，使用OR-Tools算法")
             result = self.vrp_solver.solve_with_ortools(
-                distance_matrix=adjusted_matrix.tolist(),
+                distance_matrix=clean_dist.tolist(),
                 demands=self.demands,
                 time_limit=settings.TIME_LIMIT_SECONDS,
                 time_windows=self.time_windows,
                 travel_time_predictor=self.travel_time_predictor,
                 points=self.points,
                 sim_time_seconds=sim_time,
+                travel_time_matrix=travel_time_sec.tolist(),
             )
             routes = result.routes if result else None
             if result is None:
                 print("  -> 无解, 放宽约束重试...")
                 result = self.vrp_solver.solve_with_ortools(
-                    distance_matrix=adjusted_matrix.tolist(),
+                    distance_matrix=clean_dist.tolist(),
                     demands=self.demands,
                     time_limit=settings.TIME_LIMIT_SECONDS,
                     time_windows=None,
                     travel_time_predictor=self.travel_time_predictor,
                     points=self.points,
                     sim_time_seconds=sim_time,
+                    travel_time_matrix=travel_time_sec.tolist(),
                 )
                 routes = result.routes if result else None
                 if result is not None:
@@ -659,12 +684,20 @@ class DeliverySystem:
         
         return True
 
-    def _apply_traffic_penalties(self, dist_matrix, sim_time_seconds):
-        """双模型融合拥堵预测 — LightGBM + 自适应神经网络。
+    def _compute_travel_time_matrix(self, dist_matrix, sim_time_seconds):
+        """双模型融合拥堵预测 → 行程时间矩阵 (秒)。
+
+        广义成本语义:
+          arc_cost = travel_time_sec × (cost_per_km × AVG_SPEED / 3600)
+        即「时间价值」换算为货币成本，等价于经济学广义成本函数
+        generalized_cost = α·distance + β·travel_time 在 α=0 时的特例。
 
         LightGBM (39特征, 批量训练, RMSE~60s) 提供基础乘数,
         自适应模型 (20特征, 在线SGD) 提供残差修正。
         两者加权融合: 70% LightGBM + 30% 自适应。
+
+        Returns:
+            np.ndarray: N×N 行程时间矩阵 (秒), 对角线为 0
         """
         import numpy as np
         from config import settings
@@ -672,8 +705,11 @@ class DeliverySystem:
         t = sim_time_seconds % 86400
         n = dist_matrix.shape[0]
         hour = int(t // 3600)
-        day_of_week = datetime.now().weekday()
-        penalized = dist_matrix.copy()
+        # 使用模拟时间对应的星期几, 而非真实系统时间,
+        # 保证模拟时间模式下的语义一致性
+        sim_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        day_of_week = sim_date.weekday()
+        travel_time_sec = np.zeros_like(dist_matrix)
 
         # ── 初始化/加载自适应预测器 ──
         adaptive_enabled = getattr(settings, 'ADAPTIVE_CONFIG', {}).get('enabled', True)
@@ -703,7 +739,8 @@ class DeliverySystem:
                         and self.congestion_predictor.is_trained)
 
         # ── 逐边预测拥堵乘数 ──
-        MULT_MIN, MULT_MAX = 0.8, 2.0
+        # 与模型 sigmoid 输出范围 [0.5, 5.0] 对齐, 避免训练-推理不一致
+        MULT_MIN, MULT_MAX = 0.5, 5.0
         all_factors = []
         lgb_factors = []
         adaptive_factors = []
@@ -713,10 +750,20 @@ class DeliverySystem:
         for i in range(n):
             for j in range(n):
                 if i == j or dist_matrix[i][j] <= 0:
-                    penalized[i][j] = 0.0
+                    travel_time_sec[i][j] = 0.0
                     continue
 
                 d_km = dist_matrix[i][j]
+
+                # 尝试从 Amap 缓存获取 polyline (热缓存, O(1) 内存查找)
+                polyline_str = ""
+                if self.road_network and hasattr(self.road_network, 'cache'):
+                    cached = self.road_network.cache.get(
+                        "road_driving", self.points[i], self.points[j],
+                        self.road_network.strategy,
+                    )
+                    if cached:
+                        polyline_str = cached.get("polyline", "")
 
                 # LightGBM 乘数: 预测行程时间 / 定速时间
                 lgb_mult = 1.0
@@ -738,6 +785,7 @@ class DeliverySystem:
                         adaptive_mult = self.congestion_predictor.predict(
                             self.points[i], self.points[j],
                             d_km, hour, day_of_week,
+                            polyline_str=polyline_str,
                         )
                         adaptive_mult = max(MULT_MIN, min(MULT_MAX, adaptive_mult))
                     except Exception:
@@ -753,14 +801,13 @@ class DeliverySystem:
                 else:
                     multiplier = 1.0
 
-                penalized[i][j] *= multiplier
+                # 行程时间 = 定速基准时间 × 拥堵乘数 (单位: 秒)
+                travel_time_sec[i][j] = d_km / FALLBACK_SPEED * 3600 * multiplier
                 all_factors.append(multiplier)
                 if has_lgb:
                     lgb_factors.append(lgb_mult)
                 if has_adaptive:
                     adaptive_factors.append(adaptive_mult)
-
-        np.fill_diagonal(penalized, 0.0)
 
         # ── 诊断输出 ──
         avg_factor = np.mean(all_factors) if all_factors else 1.0
@@ -795,6 +842,7 @@ class DeliverySystem:
                             (s["dest_lon"], s["dest_lat"]),
                             s["dist_km"], s["duration_seconds"],
                             s["hour"], s["day_of_week"],
+                            polyline_str=s.get("polyline", ""),
                         )
                     self.congestion_predictor.save(city)
                     adaptive_loss = self.congestion_predictor.metrics['running_loss']
@@ -804,7 +852,7 @@ class DeliverySystem:
             except Exception:
                 pass  # 在线更新失败不影响主流程
 
-        return penalized
+        return travel_time_sec
 
     def visualize_routes(self, output_dir: str = "output") -> Dict[str, str]:
         """

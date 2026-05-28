@@ -298,6 +298,7 @@ class AmapRoadNetwork:
                 dest_lon=destination[0], dest_lat=destination[1],
                 dist_km=result["distance"] / 1000.0,
                 duration_seconds=result["duration"],
+                polyline=result.get("polyline", ""),
             )
         except Exception:
             pass
@@ -377,24 +378,10 @@ class AmapRoadNetwork:
 
         # 生成所有 (i, j) 对
         pairs = [(i, j) for i in range(n) for j in range(i + 1, n)]
-        cache_hits_before = self.cache.stats()["memory_hits"] + self.cache.stats()["disk_hits"]
 
-        # 先检查缓存命中数, 用于日志
-        cached_count = 0
-        for i, j in pairs:
-            if self.cache.get("road_driving", lonlat_pts[i], lonlat_pts[j], self.strategy):
-                cached_count += 1
-        need_api = total_pairs - cached_count
-
-        if need_api == 0:
-            logger.info(f"Distance matrix: {total_pairs} pairs → ALL CACHED (instant)")
-        elif need_api < total_pairs:
-            logger.info(f"Distance matrix: {total_pairs} pairs → "
-                         f"{need_api} API calls, {cached_count} cached")
-        else:
-            logger.info(f"Distance matrix: {total_pairs} pairs via Amap "
-                         f"(parallel, {max_workers} workers, "
-                         f"rate_limit={self.rate_limit_interval}s)")
+        logger.info(f"Distance matrix: {total_pairs} pairs via Amap "
+                     f"(parallel, {max_workers} workers, "
+                     f"rate_limit={self.rate_limit_interval}s)")
 
         failed_pairs = []
         done_count = [0]  # 用 list 以在闭包中可修改

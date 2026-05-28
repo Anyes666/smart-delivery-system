@@ -5,7 +5,7 @@ import os
 # API Key 优先级: 环境变量 AMAP_API_KEY > settings 中的硬编码值(仅开发用)
 _amap_api_key = os.environ.get('AMAP_API_KEY', '')
 if not _amap_api_key:
-    _amap_api_key = ''  # 请设置环境变量 AMAP_API_KEY，或在此填入你的高德 API Key
+    _amap_api_key = 'd6d766bb695d9d99b5259144e97f3fbb'  # 请设置环境变量 AMAP_API_KEY，或在此填入你的高德 API Key
 AMAP_CONFIG = {
     'api_key': _amap_api_key,
     'base_url': 'https://restapi.amap.com/v3',
@@ -147,6 +147,16 @@ TRAFFIC_LIGHT_CONFIG = {
 # Default simulation time (seconds since midnight)
 DEFAULT_SIMULATION_TIME = 36000  # 10:00 AM
 SIMULATED_COLLECTION = False     # 由 --fast 模式设为 True, 标记采集数据为模拟
+
+# ===================== 软时间窗配置 =====================
+# 实际配送中早到/晚到应有惩罚成本而非完全不可行。
+# 启用后: 硬约束放宽 ±hard_bound_slack, 软约束在原始时间窗边界施加线性惩罚。
+SOFT_TIME_WINDOW_CONFIG = {
+    'enabled': True,               # 启用软时间窗 (替代硬约束+无解回退)
+    'early_penalty_per_min': 100,  # 早到惩罚系数 (每分钟成本单位, 与 cost_per_km 同量纲)
+    'late_penalty_per_min': 500,   # 晚到惩罚系数 (通常远高于早到)
+    'hard_bound_slack': 7200,      # 硬约束松弛量 (秒, 默认 ±2 小时)
+}
 
 # ===================== 在线自适应行程时间预测配置 =====================
 ADAPTIVE_CONFIG = {

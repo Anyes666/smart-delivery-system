@@ -4,7 +4,7 @@
 替代硬编码交通惩罚曲线。每次高德 API 返回真实耗时后,
 自动用 SGD 更新神经网络权重, 越跑越准。
 
-方法: 神经网络回归模型 (20维输入 → 64 ReLU → 32 ReLU → 拥堵乘数输出),
+方法: 神经网络回归模型 (23维输入 → 64 ReLU → 32 ReLU → 拥堵乘数输出),
       配合在线 SGD 更新 + 探索噪声实现持续自适应。
 """
 
@@ -49,8 +49,12 @@ def _build_features(
     dest_lon: float, dest_lat: float,
     dist_km: float, hour: int, day_of_week: int,
     city_center_lon: float, city_center_lat: float,
+    polyline_str: str = "",
 ) -> np.ndarray:
-    """构建 20 维特征向量, 用于拥堵预测.
+    """构建 23 维特征向量, 用于拥堵预测 (含道路几何代理特征).
+
+    与 LightGBM 的 _build_features 对齐空间特征和道路几何特征,
+    确保两个模型共享关键信息维度。
 
     特征清单:
     - 时间循环 (5): hour_sin/cos, dow_sin/cos, is_weekend
@@ -58,6 +62,7 @@ def _build_features(
     - 距离 (4): dist_km, log1p(dist_km), dist_bucket_short, dist_bucket_mid
     - 空间 (4): origin_center_dist, dest_center_dist, crosses_center, bearing_diff_norm
     - 交互 (2): rush_x_dist, night_x_dist
+    - 道路几何代理 (3): road_class_proxy, turn_rate, straight_rate
     """
     # ── 时间循环编码 ──
     hour_sin = math.sin(2 * math.pi * hour / 24)
@@ -89,7 +94,8 @@ def _build_features(
     cx = city_center_lon - origin_lon
     cy = city_center_lat - origin_lat
     dot = dx * cx + dy * cy
-    denom = max((dx * dx + dy * dy) * 111.32 ** 2, 0.01)
+    # 分子分母均为 degree² 单位, 比例无量纲
+    denom = max(dx * dx + dy * dy, 1e-8)
     projection = dot / denom
     crosses_center = 1.0 if 0.1 < projection < 0.9 else 0.0
 
@@ -106,6 +112,38 @@ def _build_features(
     rush_x_dist = is_rush * dist_km
     night_x_dist = is_night * dist_km
 
+    # ── 道路等级代理特征 (从 polyline 坐标密度反推) ──
+    road_class_proxy, turn_rate, straight_rate = 0.5, 0.0, 0.5
+    if polyline_str:
+        try:
+            coords = []
+            for pair in polyline_str.split(";"):
+                pair = pair.strip()
+                if pair:
+                    parts = pair.split(",")
+                    if len(parts) >= 2:
+                        coords.append((float(parts[0]), float(parts[1])))
+            if len(coords) >= 3:
+                density = len(coords) / max(dist_km, 0.1)
+                road_class_proxy = min(1.0, density / 30.0)
+
+                turns = 0
+                for k in range(1, len(coords) - 1):
+                    x1, y1 = coords[k - 1]
+                    x2, y2 = coords[k]
+                    x3, y3 = coords[k + 1]
+                    ang1 = math.atan2(y2 - y1, x2 - x1)
+                    ang2 = math.atan2(y3 - y2, x3 - x2)
+                    diff = abs(ang1 - ang2)
+                    if diff > math.pi:
+                        diff = 2 * math.pi - diff
+                    if diff > math.radians(20):
+                        turns += 1
+                turn_rate = turns / max(len(coords), 1)
+                straight_rate = 1.0 - turn_rate
+        except Exception:
+            pass
+
     return np.array([
         # 时间循环 (5)
         hour_sin, hour_cos, dow_sin, dow_cos, is_weekend,
@@ -118,6 +156,8 @@ def _build_features(
         bearing_diff / math.pi,
         # 交互 (2)
         rush_x_dist, night_x_dist,
+        # 道路几何代理 (3) — 与 LightGBM 特征对齐
+        road_class_proxy, turn_rate, straight_rate,
     ], dtype=np.float32)
 
 
@@ -139,9 +179,24 @@ class AdaptiveCongestionPredictor:
         self.city_center_lon = float(city_center[0])
         self.city_center_lat = float(city_center[1])
 
-        # 网络结构: 20 → 64 → 32 → 1
-        self._input_dim = 20
-        self._hidden_sizes = [64, 32]
+        # 从配置文件读取超参数 (含兜底默认值)
+        try:
+            from config.settings import ADAPTIVE_CONFIG
+        except ImportError:
+            ADAPTIVE_CONFIG = {}
+        self._hidden_sizes = list(
+            ADAPTIVE_CONFIG.get('hidden_sizes', [64, 32]))
+        self._exploration_noise = float(
+            ADAPTIVE_CONFIG.get('exploration_noise_start', 0.3))
+        self._exploration_min = float(
+            ADAPTIVE_CONFIG.get('exploration_noise_min', 0.02))
+        self._exploration_decay = float(
+            ADAPTIVE_CONFIG.get('exploration_decay', 0.999))
+        self._lr = float(
+            ADAPTIVE_CONFIG.get('learning_rate', 0.001))
+
+        # 网络结构: 23 → hidden[0] → hidden[1] → 1
+        self._input_dim = 23
         self._init_weights()
 
         # 特征归一化参数 (训练时更新)
@@ -151,11 +206,7 @@ class AdaptiveCongestionPredictor:
 
         # 在线学习状态
         self._update_count = 0
-        self._exploration_noise = 0.3    # 探索噪声标准差 (随时间衰减)
-        self._exploration_min = 0.02
-        self._exploration_decay = 0.999
         self._running_loss = None
-        self._lr = 0.0003
 
     def _init_weights(self):
         """He 初始化, 输出偏置初始化为 1.0 (定速基线)."""
@@ -169,8 +220,8 @@ class AdaptiveCongestionPredictor:
             std = math.sqrt(2.0 / fan_in)
             self.weights.append(rng.randn(sizes[i], sizes[i + 1]).astype(np.float32) * std)
             self.biases.append(np.zeros(sizes[i + 1], dtype=np.float32))
-        # 输出偏置 0 → sigmoid(0)=0.5 → 缩放后=2.75 (接近真实均值 ~2.4)
-        self.biases[-1][0] = 0.0
+        # 输出偏置 -2.0 → sigmoid(-2.0)≈0.119 → 缩放后≈1.04 (初始无拥堵假设)
+        self.biases[-1][0] = -2.0
 
     # ═══════════════════════════════════════════════════
     # 特征归一化
@@ -191,6 +242,7 @@ class AdaptiveCongestionPredictor:
                 s["dest_lon"], s["dest_lat"],
                 s["dist_km"], s["hour"], s["day_of_week"],
                 self.city_center_lon, self.city_center_lat,
+                s.get("polyline", ""),
             )
             feats.append(f)
         X = np.stack(feats)
@@ -272,12 +324,14 @@ class AdaptiveCongestionPredictor:
     def predict(
         self, origin: Tuple[float, float], dest: Tuple[float, float],
         dist_km: float, hour: int, day_of_week: int,
+        polyline_str: str = "",
     ) -> float:
         """预测拥堵乘数 (1.0 = 40km/h 定速水平)."""
         x = _build_features(
             origin[0], origin[1], dest[0], dest[1],
             dist_km, hour, day_of_week,
             self.city_center_lon, self.city_center_lat,
+            polyline_str,
         ).reshape(1, -1)
 
         y_pred, _ = self._forward(x)
@@ -298,6 +352,7 @@ class AdaptiveCongestionPredictor:
         self, origin: Tuple[float, float], dest: Tuple[float, float],
         dist_km: float, duration_seconds: float,
         hour: int, day_of_week: int,
+        polyline_str: str = "",
     ) -> float:
         """用高德 API 返回的真实值在线更新模型, 返回 loss."""
         # 真实拥堵乘数 = 实际耗时 / 定速耗时
@@ -310,6 +365,7 @@ class AdaptiveCongestionPredictor:
             origin[0], origin[1], dest[0], dest[1],
             dist_km, hour, day_of_week,
             self.city_center_lon, self.city_center_lat,
+            polyline_str,
         ).reshape(1, -1)
 
         # 过滤异常训练目标: 极端值会导致梯度爆炸

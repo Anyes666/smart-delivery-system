@@ -179,7 +179,9 @@ def _build_features(
     cx = city_center_lon - origin_lon
     cy = city_center_lat - origin_lat
     dot = dx * cx + dy * cy
-    projection = dot / max((dx * dx + dy * dy) * 111.32 ** 2, 0.01)
+    # 分子分母均为 degree² 单位, 比例无量纲, 无需 ×111.32²
+    denom = max(dx * dx + dy * dy, 1e-8)
+    projection = dot / denom
     crosses_center = 1.0 if 0.1 < projection < 0.9 else 0.0
 
     # ── 距离分桶 ──
