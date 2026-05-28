@@ -5,7 +5,7 @@ import os
 # API Key 优先级: 环境变量 AMAP_API_KEY > settings 中的硬编码值(仅开发用)
 _amap_api_key = os.environ.get('AMAP_API_KEY', '')
 if not _amap_api_key:
-    _amap_api_key = 'd6d766bb695d9d99b5259144e97f3fbb'  # 请设置环境变量 AMAP_API_KEY，或在此填入你的高德 API Key
+    _amap_api_key = ''  # 请设置环境变量 AMAP_API_KEY，或在此填入你的高德 API Key
 AMAP_CONFIG = {
     'api_key': _amap_api_key,
     'base_url': 'https://restapi.amap.com/v3',
