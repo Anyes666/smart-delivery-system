@@ -244,8 +244,8 @@ class RoadNetwork:
         result = []
         for i, nid in enumerate(node_ids):
             if isinstance(nid, float) and np.isnan(nid):
-                logger.warning(f"Point {i} ({paths[i] if 'paths' in dir() else lons[i]},"
-                               f"{lats[i]}) — no nearest OSM node. Using nearest valid node in graph.")
+                logger.warning(f"Point {i} ({lons[i]:.5f}, {lats[i]:.5f}) — "
+                               f"no nearest OSM node. Using nearest valid node in graph.")
                 # Fallback: find closest graph node by brute-force searching a subset
                 nid = self._fallback_nearest_node(lons[i], lats[i])
             result.append(int(nid))
